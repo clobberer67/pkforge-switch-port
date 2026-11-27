@@ -1,0 +1,44 @@
+# Fix the host compiler in mono-nx's toolchain image.
+#
+# devkitpro/devkita64:20260219 is Debian bookworm, whose `clang` package is
+# version 14. mono-nx pins LLVM 19 (LLVM_API_VERSION=1900) and compiles Mono's
+# LLVM glue with the *host* clang++ against LLVM 19's libc++ headers
+# (-nostdinc++ -I.../llvm/x64/include/c++/v1). libc++ 19 refuses to build on
+# anything older than Clang 17:
+#
+#   .../libc++/v1/__configuration/compiler.h:37:8:
+#     warning: "Libc++ only supports Clang 17 and later"
+#   .../libc++/v1/__fwd/functional.h:18:1:
+#     error: expected identifier or '{'
+#
+# Installing clang-19 from apt.llvm.org and making it the default matches the
+# LLVM version the runtime build itself expects. mono-nx's Dockerfile is left
+# unmodified so `git_source`'s dirty-tree check never trips.
+FROM monobuild-base
+
+USER root
+
+RUN set -eux; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends wget gnupg ca-certificates; \
+    wget -qO /etc/apt/trusted.gpg.d/apt.llvm.org.asc \
+        https://apt.llvm.org/llvm-snapshot.gpg.key; \
+    echo "deb http://apt.llvm.org/bookworm/ llvm-toolchain-bookworm-19 main" \
+        > /etc/apt/sources.list.d/llvm-19.list; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends \
+        clang-19 \
+        lld-19 \
+        llvm-19-dev \
+        libclang-19-dev; \
+    ln -sf /usr/bin/clang-19 /usr/bin/clang; \
+    ln -sf /usr/bin/clang++-19 /usr/bin/clang++; \
+    if [ -x /usr/bin/llvm-config-19 ]; then \
+        ln -sf /usr/bin/llvm-config-19 /usr/bin/llvm-config; \
+    fi; \
+    ln -sf /usr/lib/llvm-19/lib/libclang.so /usr/local/lib/libclang.so; \
+    rm -rf /var/lib/apt/lists/*; \
+    clang --version; \
+    clang++ --version
+
+WORKDIR /mono-nx
