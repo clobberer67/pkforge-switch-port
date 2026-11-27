@@ -32,6 +32,31 @@ jobs:
           git -C mono-nx rev-parse HEAD
           git -C mono-nx log -1 --format='%ci %s'
 
+      # The devkitA64 image ships Python 3.11, but the Horizon build scripts call
+      # tarfile.extractall(filter='data'), which only exists in 3.12+.
+      # A sitecustomize shim adds the keyword without dirtying the checkout
+      # (mono-nx's git_source refuses a dirty dependency tree).
+      - name: Write Python tarfile shim
+        run: |
+          mkdir -p shim
+          cat > shim/sitecustomize.py <<'PY'
+          import tarfile
+
+          _orig = tarfile.TarFile.extractall
+
+          def _extractall(self, path=".", members=None, *, numeric_owner=False, filter=None):
+              if filter is None:
+                  return _orig(self, path, members, numeric_owner=numeric_owner)
+              try:
+                  return _orig(self, path, members, numeric_owner=numeric_owner, filter=filter)
+              except TypeError:
+                  # Python < 3.12: no filter support, extract as before.
+                  return _orig(self, path, members, numeric_owner=numeric_owner)
+
+          tarfile.TarFile.extractall = _extractall
+          PY
+          cat shim/sitecustomize.py
+
       - name: Show runner capacity
         run: |
           df -h /
@@ -41,16 +66,21 @@ jobs:
       - name: Build toolchain image
         run: docker build mono-nx --file mono-nx/Dockerfile --tag monobuild
 
+      - name: Verify python inside image
+        run: docker run --rm --entrypoint /bin/bash monobuild -c 'python3 --version'
+
       - name: Build mono-nx
         run: |
-          docker run --rm -w /mono-nx -v "$PWD/mono-nx:/mono-nx" \
+          docker run --rm -w /mono-nx \
+            -v "$PWD/mono-nx:/mono-nx" \
+            -v "$PWD/shim:/shim:ro" \
+            -e PYTHONPATH=/shim \
             --entrypoint /bin/bash monobuild ./github_actions_build.sh
 
       - name: Collect outputs
         if: always()
         run: |
           df -h /
-          ls -la mono-nx || true
           ls -la mono-nx/artifacts 2>/dev/null || true
           ls -la mono-nx/native/interpreter 2>/dev/null || true
           ls -la mono-nx/sd_files 2>/dev/null | head -40 || true
