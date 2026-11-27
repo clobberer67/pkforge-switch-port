@@ -1,0 +1,80 @@
+name: Build mono-nx SDK
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/build-mono-nx.yml'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - name: Free disk space
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: false
+          swap-storage: false
+
+      - name: Checkout port repo
+        uses: actions/checkout@v4
+
+      - name: Clone mono-nx
+        run: |
+          git clone --recursive --depth 1 --shallow-submodules \
+            https://github.com/pixelomer/mono-nx.git mono-nx
+          git -C mono-nx rev-parse HEAD
+          git -C mono-nx log -1 --format='%ci %s'
+
+      - name: Show runner capacity
+        run: |
+          df -h /
+          nproc
+          free -h
+
+      - name: Build toolchain image
+        run: docker build mono-nx --file mono-nx/Dockerfile --tag monobuild
+
+      - name: Build mono-nx
+        run: |
+          docker run --rm -w /mono-nx -v "$PWD/mono-nx:/mono-nx" \
+            --entrypoint /bin/bash monobuild ./github_actions_build.sh
+
+      - name: Collect outputs
+        if: always()
+        run: |
+          df -h /
+          ls -la mono-nx || true
+          ls -la mono-nx/artifacts 2>/dev/null || true
+          ls -la mono-nx/native/interpreter 2>/dev/null || true
+          ls -la mono-nx/sd_files 2>/dev/null | head -40 || true
+
+      - name: Upload SDK
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mono-nx-sdk
+          path: mono-nx/mono-nx-sdk-linux-x64.zip
+          if-no-files-found: warn
+
+      - name: Upload sd files
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mono-nx-sd-files
+          path: mono-nx/sd_files.zip
+          if-no-files-found: warn
+
+      - name: Upload demo nro
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mono-nx-demo
+          path: mono-nx/native/interpreter/mono_nx.nro
+          if-no-files-found: warn
