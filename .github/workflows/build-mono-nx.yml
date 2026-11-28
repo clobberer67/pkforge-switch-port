@@ -63,11 +63,24 @@ jobs:
           nproc
           free -h
 
-      - name: Build toolchain image
-        run: docker build mono-nx --file mono-nx/Dockerfile --tag monobuild
+      # Stage 1: mono-nx's own pinned toolchain image.
+      - name: Build mono-nx toolchain image
+        run: docker build mono-nx --file mono-nx/Dockerfile --tag monobuild-base
 
-      - name: Verify python inside image
-        run: docker run --rm --entrypoint /bin/bash monobuild -c 'python3 --version'
+      # Stage 2: bookworm ships clang-14, but the pinned LLVM 19 libc++ headers
+      # need Clang 17+. This layer installs clang-19 and makes it the default.
+      - name: Add Clang 19 to the toolchain image
+        run: docker build --file ci/Dockerfile.mononx --tag monobuild .
+
+      - name: Verify toolchain inside image
+        run: |
+          docker run --rm --entrypoint /bin/bash monobuild -c '
+            set -e
+            python3 --version
+            clang --version
+            clang++ --version
+            llvm-config --version || true
+          '
 
       - name: Build mono-nx
         run: |
@@ -84,6 +97,7 @@ jobs:
           ls -la mono-nx/artifacts 2>/dev/null || true
           ls -la mono-nx/native/interpreter 2>/dev/null || true
           ls -la mono-nx/sd_files 2>/dev/null | head -40 || true
+          ls -la mono-nx/*.zip 2>/dev/null || true
 
       - name: Upload SDK
         if: success()
